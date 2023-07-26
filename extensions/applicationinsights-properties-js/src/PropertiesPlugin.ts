@@ -6,7 +6,7 @@
 import dynamicProto from "@microsoft/dynamicproto-js";
 import {
     BreezeChannelIdentifier, IConfig, IPropertiesPlugin, PageView, PropertiesPluginIdentifier, createDistributedTraceContextFromTrace,
-    setStoragePrefix
+    utlSetStoragePrefix
 } from "@microsoft/applicationinsights-common";
 import {
     BaseTelemetryPlugin, IAppInsightsCore, IConfigDefaults, IConfiguration, IDistributedTraceContext, IPlugin, IProcessTelemetryContext,
@@ -132,7 +132,7 @@ export default class PropertiesPlugin extends BaseTelemetryPlugin implements IPr
                 // This function will be re-called whenever any referenced configuration is changed
                 _self._addHook(onConfigChange(config, () => {
                     if (config.storagePrefix){
-                        setStoragePrefix(config.storagePrefix);
+                        utlSetStoragePrefix(config.storagePrefix);
                         // if not set in the init, but in the session.ts, we need to deliver config to session
                         // which may not be available each time when we call it
                         // ps why we will export session from the propertiesPlugin package?

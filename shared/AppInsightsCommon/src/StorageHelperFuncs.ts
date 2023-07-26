@@ -74,7 +74,7 @@ export function utlDisableStorage() {
 /**
  * Set the prefix for storage name
  */
-export function setStoragePrefix(storagePrefix: string) {
+export function utlSetStoragePrefix(storagePrefix: string) {
     _storagePrefix = storagePrefix;
 }
 
