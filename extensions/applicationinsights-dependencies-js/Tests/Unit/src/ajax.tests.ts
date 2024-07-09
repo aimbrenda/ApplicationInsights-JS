@@ -1,11 +1,12 @@
 ﻿import { SinonStub } from "sinon";
 import { Assert, AITestClass, PollingAssert } from "@microsoft/ai-test-framework";
-import { createSyncPromise } from "@nevware21/ts-async";
+import { createAsyncResolvedPromise, createSyncPromise } from "@nevware21/ts-async";
 import { AjaxMonitor } from "../../../src/ajax";
 import { DisabledPropertyName, IConfig, DistributedTracingModes, RequestHeaders, IDependencyTelemetry, IRequestContext, formatTraceParent, createTraceParent, PropertiesPluginIdentifier } from "@microsoft/applicationinsights-common";
 import {
     AppInsightsCore, IConfiguration, ITelemetryItem, ITelemetryPlugin, IChannelControls, _eInternalMessageId,
-    getPerformance, getGlobalInst, getGlobal, generateW3CId, arrForEach
+    getPerformance, getGlobalInst, getGlobal, generateW3CId, arrForEach,
+    ActiveStatus
 } from "@microsoft/applicationinsights-core-js";
 import { IDependencyListenerDetails } from "../../../src/DependencyListener";
 import { FakeXMLHttpRequest } from "@microsoft/ai-test-framework";
@@ -206,6 +207,59 @@ export class AjaxTests extends AITestClass {
                 Assert.ok(data.properties.headers, "headers should be added");
                 Assert.equal(data.properties.headers["header name"], "header value","headers should be added");
             }
+        });
+
+        this.testCaseAsync({
+            name: "Dependencies Configuration: init with cs promise ikey promise and default enableAjaxPerfTracking",
+            stepDelay: 100,
+            useFakeTimers: true,
+            steps: [() => {
+                this._ajax = new AjaxMonitor();
+                let csPromise = createAsyncResolvedPromise("testIkey");
+                let appInsightsCore = new AppInsightsCore();
+                let coreConfig = {
+                    instrumentationKey: csPromise,
+                    initTimeOut: 80000
+                    
+                };
+                appInsightsCore.initialize(coreConfig, [this._ajax, new TestChannelPlugin()]);
+          
+                let trackStub = this.sandbox.stub(appInsightsCore, "track");
+                let throwSpy = this.sandbox.spy(appInsightsCore.logger, "throwInternal");
+                Assert.equal(false, trackStub.called, "Track should not be called");
+                Assert.equal(false, throwSpy.called, "We should not have thrown an internal error");
+
+                this._context.core = appInsightsCore;
+                this._context.trackStub = trackStub;
+                this._context.throwSpy  = throwSpy;
+
+                let xhr = new XMLHttpRequest();
+                xhr.open("GET", "http://microsoft.com");
+                xhr.setRequestHeader("Content-type", "application/json");
+                xhr.send();
+                // Emulate response
+                (<any>xhr).respond(200, {"Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*"}, "");
+                Assert.ok((<any>xhr)[AJAX_DATA_CONTAINER], "should have xhr hooks");
+               
+                
+                
+            }].concat(PollingAssert.createPollingAssert(() => {
+                let core = this._context.core
+                let activeStatus = core.activeStatus && core.activeStatus();
+                let trackStub =  this._context.trackStub;
+                let throwSpy = this._context.throwSpy;
+            
+                if (activeStatus === ActiveStatus.ACTIVE) {
+                    Assert.equal("testIkey", core.config.instrumentationKey, "ikey should be set");
+                    Assert.equal(1, trackStub.callCount, "Track should be called once");
+                    Assert.equal(false, throwSpy.called, "We should not have thrown an internal error test1");
+                    let data = trackStub.args[0][0].baseData;
+                    Assert.equal(data.type, "Ajax", "request type should be ajax");
+                    Assert.ok(data.properties, "properties should be added");
+                    return true;
+                }
+                return false;
+            }, "Wait for promise response" + new Date().toISOString(), 60, 1000) as any)
         });
 
         this.testCase({
@@ -3322,6 +3376,52 @@ export class AjaxPerfTrackTests extends AITestClass {
 
                 return false;
             }, 'response received', 600, 1000) as any)
+        });
+
+        this.testCaseAsync({
+            name: "AjaxPerf: check perf mark prefix is correctly set for multiple xhr requests",
+            stepDelay: 10,
+            steps: [ (testContext) => {
+                let performance = getPerformance();
+                let markSpy = this.sandbox.spy(performance, "mark");
+
+                this._ajax = new AjaxMonitor();
+                let appInsightsCore = new AppInsightsCore();
+                let coreConfig = {
+                    instrumentationKey: "instrumentationKey",
+                    extensionConfig: {
+                        "AjaxDependencyPlugin": {
+                            appId: "appId",
+                            enableAjaxPerfTracking: true
+                        }
+                    }
+                };
+                appInsightsCore.initialize(coreConfig, [this._ajax, new TestChannelPlugin()]);
+                this._ajax["_currentWindowHost"] = "httpbin.org";
+                // Used to "wait" for App Insights to finish initializing which should complete after the XHR request
+                this._context["trackStub"] = this.sandbox.stub(appInsightsCore, "track");
+                // Act
+                var xhr = new XMLHttpRequest();
+
+                // trigger the request that should cause a track event once the xhr request is complete
+                xhr.open("GET", "https://httpbin.org/status/200");
+                xhr.send();
+
+                var xhr2 = new XMLHttpRequest();
+                xhr2.open("GET", "https://httpbin.org/anything");
+                xhr2.send();
+
+                Assert.equal(true, markSpy.called, "The code should have called been mark()");
+                let spyDetails = markSpy.args;
+                let prefix1 = spyDetails[0][0];
+                let prefix2 = spyDetails[1][0];
+                Assert.equal(prefix1.indexOf("ajaxData"), 0, "Prefix1 should start with 'ajaxData'");
+                Assert.equal(prefix2.indexOf("ajaxData"), 0, "Prefix2 should start with 'ajaxData'");
+
+                let ajaxCountOne = parseInt(prefix1.substring(prefix1.indexOf('#') + 1), 10);
+                let ajaxCountTwo = parseInt(prefix2.substring(prefix1.indexOf('#') + 1), 10);
+                Assert.equal(1, ajaxCountTwo-ajaxCountOne, "the count should increase by 1");
+           }]
         });
 
         this.testCaseAsync({
